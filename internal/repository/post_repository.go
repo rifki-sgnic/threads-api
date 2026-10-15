@@ -10,6 +10,7 @@ type PostRepository interface {
 	FindByID(id uint) (*models.Post, error)
 	FindReplies(parentID uint, limit int) ([]models.Post, error)
 	Delete(id uint) error
+	Exists(id uint) (bool, error)
 }
 
 type postRepository struct {
@@ -52,4 +53,10 @@ func (r *postRepository) FindReplies(parentID uint, limit int) ([]models.Post, e
 func (r *postRepository) Delete(id uint) error {
 	return r.db.Delete(&models.Post{}, id).Error
 
+}
+
+func (r *postRepository) Exists(id uint) (bool, error) {
+	var count int64
+	err := r.db.Model(&models.Post{}).Where("id = ?", id).Count(&count).Error
+	return count > 0, err
 }

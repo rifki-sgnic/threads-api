@@ -34,6 +34,14 @@ func main() {
 	postSvc := service.NewPostService(postRepo)
 	postHandler := handler.NewPostHandler(postSvc)
 
+	likeRepo := repository.NewLikeRepository(db)
+	likeSvc := service.NewLikeService(likeRepo, postRepo)
+	likeHandler := handler.NewLikeHandler(likeSvc)
+
+	followRepo := repository.NewFollowRepository(db)
+	followSvc := service.NewFollowService(followRepo, userRepo)
+	followHandler := handler.NewFollowHandler(followSvc)
+
 	authMW := middleware.Auth(cfg.JWTSecret)
 
 	r := gin.Default()
@@ -46,11 +54,20 @@ func main() {
 	auth.POST("/register", authHandler.Register)
 	auth.POST("/login", authHandler.Login)
 
+	// posts
 	posts := r.Group("/posts")
 	posts.GET("/:id", postHandler.Get)
 	posts.GET("/:id/replies", postHandler.Replies)
 	posts.POST("", authMW, postHandler.Create)
 	posts.DELETE("/:id", authMW, postHandler.Delete)
+	// like post
+	posts.POST("/:id/like", authMW, likeHandler.Like)
+	posts.DELETE("/:id/like", authMW, likeHandler.Unlike)
+
+	// follow
+	users := r.Group("/users")
+	users.POST("/:username/follow", authMW, followHandler.Follow)
+	users.DELETE("/:username/follow", authMW, followHandler.Unfollow)
 
 	protected := r.Group("/")
 	protected.Use(middleware.Auth(cfg.JWTSecret))
