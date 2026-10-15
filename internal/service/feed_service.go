@@ -5,11 +5,6 @@ import (
 	"github.com/rifki-sgnic/threads-api/internal/repository"
 )
 
-const (
-	defaultFeedLimit = 20
-	maxFeedLimit     = 50
-)
-
 type FeedPage struct {
 	Items      []PostView
 	NextCursor string
@@ -29,20 +24,11 @@ func NewFeedService(posts repository.PostRepository, stats *PostStatsLoader) Fee
 }
 
 func (s *feedService) GetFeed(userID uint, cursorStr string, limit int) (*FeedPage, error) {
-	if limit <= 0 {
-		limit = defaultFeedLimit
-	}
-	if limit > maxFeedLimit {
-		limit = maxFeedLimit
-	}
+	limit = normalizeLimit(limit)
 
-	var cursor *pagination.Cursor
-	if cursorStr != "" {
-		c, err := pagination.Decode(cursorStr)
-		if err != nil {
-			return nil, err
-		}
-		cursor = c
+	cursor, err := decodeOptionalCursor(cursorStr)
+	if err != nil {
+		return nil, err
 	}
 
 	// ambil limit+1: kalau dapet lebih dari limit, berarti masih ada halaman berikutnya
@@ -51,16 +37,12 @@ func (s *feedService) GetFeed(userID uint, cursorStr string, limit int) (*FeedPa
 		return nil, err
 	}
 
-	page := &FeedPage{}
-	if len(posts) > limit {
-		posts = posts[:limit]
-		last := posts[len(posts)-1]
-		page.NextCursor = pagination.Cursor{CreatedAt: last.CreatedAt, ID: last.ID}.Encode()
-	}
+	posts, next := pagination.Trim(posts, limit, postCursor)
 
-	page.Items, err = s.stats.Attach(userID, posts)
+	items, err := s.stats.Attach(userID, posts)
 	if err != nil {
 		return nil, err
 	}
-	return page, nil
+
+	return &FeedPage{Items: items, NextCursor: next}, nil
 }

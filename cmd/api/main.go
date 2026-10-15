@@ -39,6 +39,7 @@ func main() {
 	likeSvc := service.NewLikeService(likeRepo, postRepo)
 	followSvc := service.NewFollowService(followRepo, userRepo)
 	feedSvc := service.NewFeedService(postRepo, statsLoader)
+	profileSvc := service.NewProfileService(userRepo, followRepo, postRepo, statsLoader)
 
 	// handlers
 	authHandler := handler.NewAuthHandler(authSvc)
@@ -46,6 +47,7 @@ func main() {
 	likeHandler := handler.NewLikeHandler(likeSvc)
 	followHandler := handler.NewFollowHandler(followSvc)
 	feedHandler := handler.NewFeedHandler(feedSvc)
+	profileHandler := handler.NewProfileHandler(profileSvc)
 
 	authMW := middleware.Auth(cfg.JWTSecret)
 	optAuthMW := middleware.OptionalAuth(cfg.JWTSecret)
@@ -72,17 +74,15 @@ func main() {
 
 	// follow
 	users := r.Group("/users")
+	users.GET("/:username", optAuthMW, profileHandler.Get)
+	users.GET("/:username/posts", optAuthMW, profileHandler.Posts)
 	users.POST("/:username/follow", authMW, followHandler.Follow)
 	users.DELETE("/:username/follow", authMW, followHandler.Unfollow)
 
+	r.PATCH("/me", authMW, profileHandler.UpdateMe)
+
 	// feed
 	r.GET("/feed", authMW, feedHandler.Get)
-
-	protected := r.Group("/")
-	protected.Use(middleware.Auth(cfg.JWTSecret))
-	protected.GET("/me", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"user_id": c.GetUint(middleware.UserIDKey)})
-	})
 
 	log.Printf("server running on :%s", cfg.AppPort)
 	if err := r.Run(":" + cfg.AppPort); err != nil {

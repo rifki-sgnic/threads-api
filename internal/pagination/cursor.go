@@ -44,3 +44,12 @@ func Decode(s string) (*Cursor, error) {
 
 	return &Cursor{CreatedAt: time.UnixMicro(micro), ID: uint(id)}, nil
 }
+
+func Trim[T any](items []T, limit int, cursorOf func(T) Cursor) ([]T, string) {
+	if len(items) <= limit {
+		return items, ""
+	}
+
+	items = items[:limit]
+	return items, cursorOf(items[len(items)-1]).Encode()
+}

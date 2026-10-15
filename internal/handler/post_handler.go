@@ -153,3 +153,17 @@ func respondPostError(c *gin.Context, err error) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 	}
 }
+
+func respondPostPage(c *gin.Context, page *service.FeedPage) {
+	items := make([]postWithStatsResponse, 0, len(page.Items))
+	for i := range page.Items {
+		items = append(items, toPostWithStatsResponse(&page.Items[i]))
+	}
+
+	var next *string
+	if page.NextCursor != "" {
+		next = &page.NextCursor
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": items, "next_cursor": next})
+}

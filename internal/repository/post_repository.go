@@ -14,6 +14,8 @@ type PostRepository interface {
 	Exists(id uint) (bool, error)
 	Feed(userID uint, cursor *pagination.Cursor, limit int) ([]models.Post, error)
 	CountReplies(postIDs []uint) (map[uint]int64, error)
+	FindByUser(userID uint, cursor *pagination.Cursor, limit int) ([]models.Post, error)
+	CountByUser(userID uint) (int64, error)
 }
 
 type postRepository struct {
@@ -78,9 +80,7 @@ func (r *postRepository) Feed(userID uint, cursor *pagination.Cursor, limit int)
 		Where("parent_id IS NULL").
 		Where("user_id = ? OR user_id IN (?)", userID, following)
 
-	if cursor != nil {
-		q = q.Where("(created_at, id) < (?, ?)", cursor.CreatedAt, cursor.ID)
-	}
+	q = withCursor(q, cursor)
 
 	var posts []models.Post
 	err := q.Order("created_at DESC, id DESC").Limit(limit).Find(&posts).Error
@@ -106,10 +106,35 @@ func (r *postRepository) CountReplies(postIDs []uint) (map[uint]int64, error) {
 	return toCountMap(rows), nil
 }
 
+func (r *postRepository) FindByUser(userID uint, cursor *pagination.Cursor, limit int) ([]models.Post, error) {
+	q := r.db.Preload("User").Where("user_id = ? AND parent_id IS NULL", userID)
+	q = withCursor(q, cursor)
+
+	var posts []models.Post
+	err := q.Order("created_at DESC, id DESC").Limit(limit).Find(&posts).Error
+	return posts, err
+}
+
+func (r *postRepository) CountByUser(userID uint) (int64, error) {
+	var n int64
+	err := r.db.Model(&models.Post{}).
+		Where("user_id = ? AND parent_id IS NULL", userID).
+		Count(&n).Error
+
+	return n, err
+}
+
 func toCountMap(rows []countRow) map[uint]int64 {
 	m := make(map[uint]int64, len(rows))
 	for _, r := range rows {
 		m[r.PostID] = r.Count
 	}
 	return m
+}
+
+func withCursor(q *gorm.DB, c *pagination.Cursor) *gorm.DB {
+	if c == nil {
+		return q
+	}
+	return q.Where("(created_at, id) < (?, ?)", c.CreatedAt, c.ID)
 }
