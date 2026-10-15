@@ -26,23 +26,29 @@ func main() {
 		log.Fatalf("failed to migrate database: %v", err)
 	}
 
+	// repos
 	userRepo := repository.NewUserRepository(db)
-	authSvc := service.NewAuthService(userRepo, cfg.JWTSecret, time.Duration(cfg.JWTExpiryHours)*time.Hour)
-	authHandler := handler.NewAuthHandler(authSvc)
-
 	postRepo := repository.NewPostRepository(db)
-	postSvc := service.NewPostService(postRepo)
-	postHandler := handler.NewPostHandler(postSvc)
-
 	likeRepo := repository.NewLikeRepository(db)
-	likeSvc := service.NewLikeService(likeRepo, postRepo)
-	likeHandler := handler.NewLikeHandler(likeSvc)
-
 	followRepo := repository.NewFollowRepository(db)
+
+	// services
+	statsLoader := service.NewPostStatsLoader(postRepo, likeRepo)
+	authSvc := service.NewAuthService(userRepo, cfg.JWTSecret, time.Duration(cfg.JWTExpiryHours)*time.Hour)
+	postSvc := service.NewPostService(postRepo, statsLoader)
+	likeSvc := service.NewLikeService(likeRepo, postRepo)
 	followSvc := service.NewFollowService(followRepo, userRepo)
+	feedSvc := service.NewFeedService(postRepo, statsLoader)
+
+	// handlers
+	authHandler := handler.NewAuthHandler(authSvc)
+	postHandler := handler.NewPostHandler(postSvc)
+	likeHandler := handler.NewLikeHandler(likeSvc)
 	followHandler := handler.NewFollowHandler(followSvc)
+	feedHandler := handler.NewFeedHandler(feedSvc)
 
 	authMW := middleware.Auth(cfg.JWTSecret)
+	optAuthMW := middleware.OptionalAuth(cfg.JWTSecret)
 
 	r := gin.Default()
 
@@ -56,8 +62,8 @@ func main() {
 
 	// posts
 	posts := r.Group("/posts")
-	posts.GET("/:id", postHandler.Get)
-	posts.GET("/:id/replies", postHandler.Replies)
+	posts.GET("/:id", optAuthMW, postHandler.Get)
+	posts.GET("/:id/replies", optAuthMW, postHandler.Replies)
 	posts.POST("", authMW, postHandler.Create)
 	posts.DELETE("/:id", authMW, postHandler.Delete)
 	// like post
@@ -68,6 +74,9 @@ func main() {
 	users := r.Group("/users")
 	users.POST("/:username/follow", authMW, followHandler.Follow)
 	users.DELETE("/:username/follow", authMW, followHandler.Unfollow)
+
+	// feed
+	r.GET("/feed", authMW, feedHandler.Get)
 
 	protected := r.Group("/")
 	protected.Use(middleware.Auth(cfg.JWTSecret))

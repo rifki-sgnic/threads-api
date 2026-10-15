@@ -38,6 +38,13 @@ type postResponse struct {
 	CreatedAt time.Time      `json:"created_at"`
 }
 
+type postWithStatsResponse struct {
+	postResponse
+	LikeCount  int64 `json:"like_count"`
+	ReplyCount int64 `json:"reply_count"`
+	LikedByMe  bool  `json:"liked_by_me"`
+}
+
 func toPostResponse(p *models.Post) postResponse {
 	return postResponse{
 		ID:        p.ID,
@@ -45,6 +52,15 @@ func toPostResponse(p *models.Post) postResponse {
 		ParentID:  p.ParentID,
 		Author:    authorResponse{ID: p.UserID, Username: p.User.Username},
 		CreatedAt: p.CreatedAt,
+	}
+}
+
+func toPostWithStatsResponse(v *service.PostView) postWithStatsResponse {
+	return postWithStatsResponse{
+		postResponse: toPostResponse(&v.Post),
+		LikeCount:    v.LikeCount,
+		ReplyCount:   v.ReplyCount,
+		LikedByMe:    v.LikedByMe,
 	}
 }
 
@@ -74,13 +90,13 @@ func (h *PostHandler) Get(c *gin.Context) {
 		return
 	}
 
-	post, err := h.svc.GetByID(id)
+	view, err := h.svc.GetDetail(c.GetUint(middleware.UserIDKey), id)
 	if err != nil {
 		respondPostError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, toPostResponse(post))
+	c.JSON(http.StatusOK, toPostWithStatsResponse(view))
 }
 
 func (h *PostHandler) Replies(c *gin.Context) {
@@ -89,15 +105,15 @@ func (h *PostHandler) Replies(c *gin.Context) {
 		return
 	}
 
-	replies, err := h.svc.GetReplies(id)
+	views, err := h.svc.GetRepliesWithStats(c.GetUint(middleware.UserIDKey), id)
 	if err != nil {
 		respondPostError(c, err)
 		return
 	}
 
-	out := make([]postResponse, 0, len(replies))
-	for i := range replies {
-		out = append(out, toPostResponse(&replies[i]))
+	out := make([]postWithStatsResponse, 0, len(views))
+	for i := range views {
+		out = append(out, toPostWithStatsResponse(&views[i]))
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
 }
