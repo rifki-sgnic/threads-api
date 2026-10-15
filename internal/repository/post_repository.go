@@ -2,6 +2,7 @@ package repository
 
 import (
 	"github.com/rifki-sgnic/threads-api/internal/models"
+	"github.com/rifki-sgnic/threads-api/internal/pagination"
 	"gorm.io/gorm"
 )
 
@@ -11,10 +12,17 @@ type PostRepository interface {
 	FindReplies(parentID uint, limit int) ([]models.Post, error)
 	Delete(id uint) error
 	Exists(id uint) (bool, error)
+	Feed(userID uint, cursor *pagination.Cursor, limit int) ([]models.Post, error)
+	CountReplies(postIDs []uint) (map[uint]int64, error)
 }
 
 type postRepository struct {
 	db *gorm.DB
+}
+
+type countRow struct {
+	PostID uint
+	Count  int64
 }
 
 func NewPostRepository(db *gorm.DB) PostRepository {
@@ -59,4 +67,49 @@ func (r *postRepository) Exists(id uint) (bool, error) {
 	var count int64
 	err := r.db.Model(&models.Post{}).Where("id = ?", id).Count(&count).Error
 	return count > 0, err
+}
+
+func (r *postRepository) Feed(userID uint, cursor *pagination.Cursor, limit int) ([]models.Post, error) {
+	following := r.db.Model(&models.Follow{}).
+		Select("followee_id").
+		Where("follower_id = ?", userID)
+
+	q := r.db.Preload("User").
+		Where("parent_id IS NULL").
+		Where("user_id = ? OR user_id IN (?)", userID, following)
+
+	if cursor != nil {
+		q = q.Where("(created_at, id) < (?, ?)", cursor.CreatedAt, cursor.ID)
+	}
+
+	var posts []models.Post
+	err := q.Order("created_at DESC, id DESC").Limit(limit).Find(&posts).Error
+	return posts, err
+}
+
+func (r *postRepository) CountReplies(postIDs []uint) (map[uint]int64, error) {
+	if len(postIDs) == 0 {
+		return map[uint]int64{}, nil
+	}
+
+	var rows []countRow
+	err := r.db.Model(&models.Post{}).
+		Select("parent_id AS post_id, COUNT(*) as count").
+		Where("parent_id IN ?", postIDs).
+		Group("parent_id").
+		Scan(&rows).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return toCountMap(rows), nil
+}
+
+func toCountMap(rows []countRow) map[uint]int64 {
+	m := make(map[uint]int64, len(rows))
+	for _, r := range rows {
+		m[r.PostID] = r.Count
+	}
+	return m
 }

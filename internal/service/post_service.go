@@ -28,14 +28,17 @@ type PostService interface {
 	GetByID(id uint) (*models.Post, error)
 	GetReplies(postID uint) ([]models.Post, error)
 	Delete(userID, postID uint) error
+	GetDetail(viewerID, id uint) (*PostView, error)
+	GetRepliesWithStats(viewerID, postID uint) ([]PostView, error)
 }
 
 type postService struct {
 	posts repository.PostRepository
+	stats *PostStatsLoader
 }
 
-func NewPostService(posts repository.PostRepository) PostService {
-	return &postService{posts: posts}
+func NewPostService(posts repository.PostRepository, stats *PostStatsLoader) PostService {
+	return &postService{posts: posts, stats: stats}
 }
 
 // Create implements [PostService].
@@ -98,4 +101,27 @@ func (s *postService) Delete(userID uint, postID uint) error {
 	}
 
 	return s.posts.Delete(postID)
+}
+
+func (s *postService) GetDetail(viewerID, id uint) (*PostView, error) {
+	post, err := s.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+
+	views, err := s.stats.Attach(viewerID, []models.Post{*post})
+	if err != nil {
+		return nil, err
+	}
+
+	return &views[0], nil
+}
+
+func (s *postService) GetRepliesWithStats(viewerID, postID uint) ([]PostView, error) {
+	replies, err := s.GetReplies(postID)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.stats.Attach(viewerID, replies)
 }
