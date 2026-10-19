@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -78,7 +77,7 @@ func (h *PostHandler) Create(c *gin.Context) {
 	})
 
 	if err != nil {
-		respondPostError(c, err)
+		respondError(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, toPostResponse(post))
@@ -92,7 +91,7 @@ func (h *PostHandler) Get(c *gin.Context) {
 
 	view, err := h.svc.GetDetail(c.GetUint(middleware.UserIDKey), id)
 	if err != nil {
-		respondPostError(c, err)
+		respondError(c, err)
 		return
 	}
 
@@ -107,7 +106,7 @@ func (h *PostHandler) Replies(c *gin.Context) {
 
 	views, err := h.svc.GetRepliesWithStats(c.GetUint(middleware.UserIDKey), id)
 	if err != nil {
-		respondPostError(c, err)
+		respondError(c, err)
 		return
 	}
 
@@ -125,7 +124,7 @@ func (h *PostHandler) Delete(c *gin.Context) {
 	}
 
 	if err := h.svc.Delete(c.GetUint(middleware.UserIDKey), id); err != nil {
-		respondPostError(c, err)
+		respondError(c, err)
 		return
 	}
 
@@ -141,15 +140,16 @@ func parseID(c *gin.Context) (uint, bool) {
 	return uint(id), true
 }
 
-func respondPostError(c *gin.Context, err error) {
-	switch {
-	case errors.Is(err, service.ErrPostNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-	case errors.Is(err, service.ErrForbidden):
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-	case errors.Is(err, service.ErrEmptyContent):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+func respondPostPage(c *gin.Context, page *service.FeedPage) {
+	items := make([]postWithStatsResponse, 0, len(page.Items))
+	for i := range page.Items {
+		items = append(items, toPostWithStatsResponse(&page.Items[i]))
 	}
+
+	var next *string
+	if page.NextCursor != "" {
+		next = &page.NextCursor
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": items, "next_cursor": next})
 }

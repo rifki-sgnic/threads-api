@@ -23,7 +23,7 @@ func (h *LikeHandler) Like(c *gin.Context) {
 	}
 
 	if err := h.svc.Like(c.GetUint(middleware.UserIDKey), postID); err != nil {
-		respondPostError(c, err)
+		respondError(c, err)
 		return
 	}
 
@@ -37,7 +37,7 @@ func (h *LikeHandler) Unlike(c *gin.Context) {
 	}
 
 	if err := h.svc.Unlike(c.GetUint(middleware.UserIDKey), postID); err != nil {
-		respondPostError(c, err)
+		respondError(c, err)
 		return
 	}
 
