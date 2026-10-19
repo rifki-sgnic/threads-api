@@ -1,0 +1,764 @@
+openapi: 3.0.3
+info:
+  title: Threads API
+  version: 1.0.0
+  description: |
+    A simple Threads-style backend (Go, Gin, GORM, PostgreSQL).
+
+    **Authentication**: log in via `POST /auth/login`, then send the token in the
+    header `Authorization: Bearer <token>`. Endpoints with a padlock require login.
+
+    Some public endpoints accept a token optionally, so that `liked_by_me` and
+    `is_following` can be filled in. If a token is sent but is broken or expired,
+    the server replies 401 and does not silently treat the request as anonymous.
+
+    **Pagination**: all lists use cursors. Send the `next_cursor` from the previous
+    response as `?cursor=`. `next_cursor: null` means this is the last page.
+    The cursor is opaque: do not parse it or build one yourself.
+servers:
+  - url: /
+    description: The server that is serving this document
+tags:
+  - name: System
+  - name: Auth
+  - name: Feed
+  - name: Posts
+  - name: Users
+
+paths:
+  /health:
+    get:
+      tags: [System]
+      summary: Liveness check
+      responses:
+        "200":
+          description: The process is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+  /ready:
+    get:
+      tags: [System]
+      summary: Readiness check (verifies the database connection)
+      responses:
+        "200":
+          description: Ready to receive traffic
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+        "503":
+          description: The database is unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Account created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: Username or email is already taken
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: username or email already taken
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in and get a JWT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Wrong email or password (the message is intentionally the same for both cases)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: invalid email or password
+
+  /feed:
+    get:
+      tags: [Feed]
+      summary: Home feed
+      description: |
+        Top-level posts (not replies) from the users you follow plus your own
+        posts, newest first.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of the feed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /posts:
+    post:
+      tags: [Posts]
+      summary: Create a post or a reply
+      description: Set `parent_id` to create a reply. Content that is only whitespace is rejected.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePostRequest"
+      responses:
+        "201":
+          description: Post created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: "`parent_id` does not exist"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: post not found
+
+  /posts/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PostId"
+    get:
+      tags: [Posts]
+      summary: Get a post
+      security:
+        - {}
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The post together with its stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostWithStats"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Posts]
+      summary: Delete a post
+      description: Owner only. Replies and likes of the post are deleted as well (cascade).
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /posts/{id}/replies:
+    parameters:
+      - $ref: "#/components/parameters/PostId"
+    get:
+      tags: [Posts]
+      summary: List replies
+      description: Direct replies only, oldest first, at most 50 items (no cursor yet).
+      security:
+        - {}
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Replies to this post
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepliesResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /posts/{id}/like:
+    parameters:
+      - $ref: "#/components/parameters/PostId"
+    post:
+      tags: [Posts]
+      summary: Like a post
+      description: Idempotent. Liking twice still returns 204 and is recorded only once.
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Success
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Posts]
+      summary: Unlike a post
+      description: Idempotent. Unliking a post that is not liked still returns 204.
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Success
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /users/{username}:
+    parameters:
+      - $ref: "#/components/parameters/Username"
+    get:
+      tags: [Users]
+      summary: Public profile
+      security:
+        - {}
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The profile together with its stats (no email)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/UserNotFound"
+
+  /users/{username}/posts:
+    parameters:
+      - $ref: "#/components/parameters/Username"
+    get:
+      tags: [Users]
+      summary: Posts by a user
+      description: Top-level posts only (replies are excluded), newest first.
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of posts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/UserNotFound"
+
+  /users/{username}/followers:
+    parameters:
+      - $ref: "#/components/parameters/Username"
+    get:
+      tags: [Users]
+      summary: List followers
+      description: Ordered by who followed most recently.
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of users
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/UserNotFound"
+
+  /users/{username}/following:
+    parameters:
+      - $ref: "#/components/parameters/Username"
+    get:
+      tags: [Users]
+      summary: List followed users
+      description: Ordered by who was followed most recently.
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of users
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/UserNotFound"
+
+  /users/{username}/follow:
+    parameters:
+      - $ref: "#/components/parameters/Username"
+    post:
+      tags: [Users]
+      summary: Follow a user
+      description: Idempotent. You cannot follow yourself.
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Success
+        "400":
+          description: Tried to follow yourself
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: you cannot follow yourself
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/UserNotFound"
+    delete:
+      tags: [Users]
+      summary: Unfollow a user
+      description: Idempotent.
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/UserNotFound"
+
+  /me:
+    get:
+      tags: [Users]
+      summary: Get your own account
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Your own data (includes email)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    patch:
+      tags: [Users]
+      summary: Update your own bio
+      description: Send an empty string as `bio` to clear it. The `bio` field is required.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMeRequest"
+      responses:
+        "200":
+          description: Your latest data (includes email)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    PostId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    Username:
+      name: username
+      in: path
+      required: true
+      schema:
+        type: string
+        example: rifki
+    Limit:
+      name: limit
+      in: query
+      description: >-
+        Number of items per page. Values above 50 are capped at 50.
+        A missing or invalid value defaults to 20.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 20
+    Cursor:
+      name: cursor
+      in: query
+      description: The `next_cursor` value from the previous page. Empty means the first page.
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Invalid request (body, id, or cursor)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: invalid cursor
+    Unauthorized:
+      description: The token is missing (on login-required endpoints) or is broken or expired
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: invalid or expired token
+    Forbidden:
+      description: You are not the owner of this resource
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: you are not allowed to do this
+    NotFound:
+      description: Post not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: post not found
+    UserNotFound:
+      description: User not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: user not found
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    Status:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          example: ok
+
+    RegisterRequest:
+      type: object
+      required: [username, email, password]
+      properties:
+        username:
+          type: string
+          pattern: "^[a-zA-Z0-9]+$"
+          minLength: 3
+          maxLength: 30
+          example: rifki
+        email:
+          type: string
+          format: email
+          example: rifki@mail.com
+        password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 72
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+    TokenResponse:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: "A JWT (HS256). Send it as `Authorization: Bearer <token>`."
+    CreatePostRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 500
+          example: hello threads, this is my first post
+        parent_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Set this to create a reply
+    UpdateMeRequest:
+      type: object
+      required: [bio]
+      properties:
+        bio:
+          type: string
+          maxLength: 160
+          example: backend dev, learning Go
+
+    User:
+      type: object
+      required: [id, username, email, bio, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        bio:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    Me:
+      type: object
+      required: [id, username, email, bio]
+      properties:
+        id:
+          type: integer
+          format: int64
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        bio:
+          type: string
+    Profile:
+      type: object
+      required:
+        [
+          id,
+          username,
+          bio,
+          follower_count,
+          following_count,
+          post_count,
+          is_following,
+          created_at,
+        ]
+      properties:
+        id:
+          type: integer
+          format: int64
+        username:
+          type: string
+        bio:
+          type: string
+        follower_count:
+          type: integer
+          format: int64
+        following_count:
+          type: integer
+          format: int64
+        post_count:
+          type: integer
+          format: int64
+          description: Number of top-level posts (replies are not counted)
+        is_following:
+          type: boolean
+          description: Always false for anonymous viewers and for your own profile
+        created_at:
+          type: string
+          format: date-time
+    UserItem:
+      type: object
+      required: [id, username, bio, is_following]
+      properties:
+        id:
+          type: integer
+          format: int64
+        username:
+          type: string
+        bio:
+          type: string
+        is_following:
+          type: boolean
+          description: Whether the viewer follows this user. Always false for anonymous viewers.
+    UserPage:
+      type: object
+      required: [data, next_cursor]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserItem"
+        next_cursor:
+          type: string
+          nullable: true
+          description: null means this is the last page
+
+    Author:
+      type: object
+      required: [id, username]
+      properties:
+        id:
+          type: integer
+          format: int64
+        username:
+          type: string
+    Post:
+      type: object
+      required: [id, content, parent_id, author, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        content:
+          type: string
+          maxLength: 500
+        parent_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: null for a top-level post, set for a reply
+        author:
+          $ref: "#/components/schemas/Author"
+        created_at:
+          type: string
+          format: date-time
+    PostWithStats:
+      allOf:
+        - $ref: "#/components/schemas/Post"
+        - type: object
+          required: [like_count, reply_count, liked_by_me]
+          properties:
+            like_count:
+              type: integer
+              format: int64
+            reply_count:
+              type: integer
+              format: int64
+            liked_by_me:
+              type: boolean
+              description: Always false for anonymous viewers
+    PostPage:
+      type: object
+      required: [data, next_cursor]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/PostWithStats"
+        next_cursor:
+          type: string
+          nullable: true
+          description: null means this is the last page
+    RepliesResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/PostWithStats"

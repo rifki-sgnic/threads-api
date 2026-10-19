@@ -1,14 +1,12 @@
 package handler
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rifki-sgnic/threads-api/internal/middleware"
-	"github.com/rifki-sgnic/threads-api/internal/pagination"
 	"github.com/rifki-sgnic/threads-api/internal/service"
 )
 
@@ -45,7 +43,7 @@ type updateMeRequest struct {
 func (h *ProfileHandler) Get(c *gin.Context) {
 	p, err := h.svc.GetProfile(c.GetUint(middleware.UserIDKey), c.Param("username"))
 	if err != nil {
-		respondProfileError(c, err)
+		respondError(c, err)
 		return
 	}
 
@@ -71,7 +69,7 @@ func (h *ProfileHandler) Posts(c *gin.Context) {
 		limit,
 	)
 	if err != nil {
-		respondProfileError(c, err)
+		respondError(c, err)
 		return
 	}
 
@@ -87,7 +85,7 @@ func (h *ProfileHandler) UpdateMe(c *gin.Context) {
 
 	user, err := h.svc.UpdateBio(c.GetUint(middleware.UserIDKey), *req.Bio)
 	if err != nil {
-		respondProfileError(c, err)
+		respondError(c, err)
 		return
 	}
 
@@ -99,13 +97,17 @@ func (h *ProfileHandler) UpdateMe(c *gin.Context) {
 	})
 }
 
-func respondProfileError(c *gin.Context, err error) {
-	switch {
-	case errors.Is(err, service.ErrUserNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-	case errors.Is(err, pagination.ErrInvalidCursor):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+func (h *ProfileHandler) Me(c *gin.Context) {
+	user, err := h.svc.GetMe(c.GetUint(middleware.UserIDKey))
+	if err != nil {
+		respondError(c, err)
+		return
 	}
+
+	c.JSON(http.StatusOK, meResponse{
+		ID:       user.ID,
+		Username: user.Username,
+		Email:    user.Email,
+		Bio:      user.Bio,
+	})
 }

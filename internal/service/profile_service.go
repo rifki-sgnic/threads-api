@@ -22,6 +22,7 @@ type ProfileService interface {
 	GetProfile(viewerID uint, username string) (*Profile, error)
 	GetUserPosts(viewerID uint, username, cursor string, limit int) (*FeedPage, error)
 	UpdateBio(userID uint, bio string) (*models.User, error)
+	GetMe(userID uint) (*models.User, error)
 }
 
 type profileService struct {
@@ -119,6 +120,10 @@ func (s *profileService) UpdateBio(userID uint, bio string) (*models.User, error
 		return nil, err
 	}
 
+	return s.GetMe(userID)
+}
+
+func (s *profileService) GetMe(userID uint) (*models.User, error) {
 	user, err := s.users.FindByID(userID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
